@@ -14,11 +14,12 @@ if [[ ! -f "$REGISTRY" ]]; then
   exit 1
 fi
 
-python << 'PYTHON_SCRIPT' > "$README"
-import json
-import sys
+python -c "
+import json, sys, os
+registry_path = sys.argv[1]
+readme_path = sys.argv[2]
 
-with open("registry.json", "r", encoding="utf-8") as f:
+with open(registry_path, "r", encoding="utf-8") as f:
     data = json.load(f)
 
 skills = data.get("skills", [])
@@ -116,7 +117,8 @@ lines.append("- [skills.sh](https://skills.sh) - AI Agent Skills 目录")
 lines.append("- [Claude Code 文档](https://code.claude.com/docs) - Claude Code 官方文档")
 lines.append("")
 
-print("\n".join(lines))
+with open(readme_path, "w", encoding="utf-8", newline="\n") as f:
+    f.write("\n".join(lines) + "\n")
 PYTHON_SCRIPT
 
 echo "README.md generated from registry.json"

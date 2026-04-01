@@ -72,6 +72,20 @@
         "claude-code": ">=1.0.0"
       },
       "install": "npx skills add kongshan001/cc_skills_marketplace/cc-plugin-researcher"
+    },
+    {
+      "name": "cc-skill-evolver",
+      "description": "基于 autoresearch 实验循环思路，持续迭代优化已有的 Claude Code skill，处理触发不准、输出不理想等质量问题。",
+      "path": "cc-skill-evolver",
+      "tier": "basic",
+      "version": "0.1.0",
+      "author": "kongshan001",
+      "license": "Apache-2.0",
+      "tags": ["skill", "iteration", "optimization", "evolution", "quality"],
+      "compatibility": {
+        "claude-code": ">=1.0.0"
+      },
+      "install": "npx skills add kongshan001/cc_skills_marketplace/cc-skill-evolver"
     }
   ]
 }

@@ -31,7 +31,7 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
     data = json.load(f)
 for skill in data.get('skills', []):
     print(skill['path'])
-" "$REGISTRY" 2>/dev/null)
+" "$REGISTRY" 2>/dev/null | tr -d '\r')
 
 if [[ -z "$REGISTRY_PATHS" ]]; then
   echo -e "${RED}[FAIL]${NC} No skills found in registry.json"

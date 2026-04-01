@@ -21,7 +21,8 @@ npx skills add kongshan001/cc_skills_marketplace/<skill-name> -g -y
 | [cc-code-setup](./cc-code-setup/) | 一键生成完整的 .claude 工程目录结构，基于 Claude Code 官方文档最佳实践，支持 5 种预设模板... | ![basic](https://img.shields.io/badge/tier-basic-yellow) | 1.0.0 |
 | [cc-skills-researcher](./cc-skills-researcher/) | 定期调研 Claude Code 热门 Skills 和插件，搜索 GitHub/ClawHub 生成调研报告并推... | ![basic](https://img.shields.io/badge/tier-basic-yellow) | 0.1.0 |
 | [cc-plugin-researcher](./cc-plugin-researcher/) | 定期调研 Claude Code 热门 MCP 插件，搜索 GitHub/awesome-claude-code ... | ![basic](https://img.shields.io/badge/tier-basic-yellow) | 0.1.0 |
-| [cc-skill-evolver](./cc-skill-evolver/) | 基于autoresearch实验循环思路持续迭代优化已有skill支持eval错误案例AI自评+人工审核 | ![experimental](https://img.shields.io/badge/tier-experimental-orange) | 0.1.0 |
+| [cc-skill-evolver](./cc-skill-evolver/) | 基于 autoresearch 实验循环思路，持续迭代优化已有的 Claude Code skill，处理触发不准... | ![basic](https://img.shields.io/badge/tier-basic-yellow) | 0.1.0 |
+
 ### 质量等级说明
 
 | 等级 | 含义 |

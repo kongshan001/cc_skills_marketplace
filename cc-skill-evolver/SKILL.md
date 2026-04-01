@@ -44,14 +44,16 @@ description: |
 
 ### 0.2 检查目录结构
 
-目标 skill 需要以下结构：
+目标 skill 支持两种评估格式，优先使用格式 A，如果已有格式 B 也可直接使用：
+
+**格式 A：错误案例格式（推荐）**
 
 ```
 target-skill/
 ├── SKILL.md                  # 被迭代的主体（必需）
-├── eval/                     # 评估基准（如果没有，引导创建）
-│   ├── error_001.md          # 错误案例：描述 skill 处理不当的场景
-│   ├── error_001_fix.md      # 期望结果：正确的处理方式
+├── eval/                     # 评估基准
+│   ├── error_001.md          # 错误案例：场景 + 实际行为 + 期望行为
+│   ├── error_001_fix.md      # 期望修复结果：正确的详细输出（评估时不提前读取）
 │   ├── error_002.md
 │   ├── error_002_fix.md
 │   └── ...
@@ -59,9 +61,43 @@ target-skill/
 └── references/               # 可选的参考资源
 ```
 
+**格式 B：skill-creator evals.json 格式（兼容）**
+
+```
+target-skill/
+├── SKILL.md
+├── evals/
+│   └── evals.json            # skill-creator 标准评估文件
+├── results.tsv
+└── references/
+```
+
+`evals.json` 格式如下（来自 skill-creator 标准）：
+
+```json
+{
+  "skill_name": "example-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "用户的任务描述",
+      "expected_output": "期望输出的描述",
+      "files": [],
+      "assertions": [
+        {"name": "assertion-name", "type": "contains", "value": "..."}
+      ]
+    }
+  ]
+}
+```
+
+如果目标 skill 同时有 `eval/` 和 `evals/evals.json`，合并使用。
+
 ### 0.3 引导创建 eval/ 错误案例
 
-如果 `eval/` 目录不存在或为空，需要引导用户创建。对用户说：
+如果 `eval/` 目录不存在或为空，也没有 `evals/evals.json`，需要引导用户创建。
+
+**方式一：引导用户创建错误案例文件**
 
 > "要优化这个 skill，我们需要先建立评估基准。请在 eval/ 目录下创建错误案例：
 > - `error_001.md`：描述一个 skill 处理不当的具体场景
@@ -70,28 +106,38 @@ target-skill/
 > 每个错误案例应该是一个具体的、可复现的场景，而不是笼统的描述。
 > 建议至少创建 3 个错误案例才能开始迭代。"
 
+**方式二：引导用户创建 evals.json**
+
+> "或者，你可以在 evals/ 目录下创建 `evals.json`，遵循 skill-creator 的标准格式：
+> 包含 prompt（测试输入）、expected_output（期望输出）、assertions（断言）。"
+
 **错误案例编写指南**（向用户展示）：
 
 ```markdown
-## error_x.md 格式
+## error_x.md 格式（包含完整信息用于后续分析）
 
 ### 场景描述
-描述触发此 skill 的用户输入或上下文。
+描述触发此 skill 的用户输入或上下文。越具体越好，包括文件路径、项目结构、
+用户原话等。
 
 ### 实际行为
-描述 skill 当前的错误行为或不足之处。
+描述 skill 当前的错误行为或不足之处。包括具体的错误输出示例。
 
 ### 期望行为
 描述 skill 应该如何正确处理此场景。
 
-## error_x_fix.md 格式
+## error_x_fix.md 格式（评估时才读取，防止信息泄露）
 
 ### 正确输出
-描述 skill 应该产生的正确输出。
+描述 skill 应该产生的完整正确输出，包括具体的文件内容、步骤等。
 
 ### 关键改进点
 - 列出具体需要改进的方面
 ```
+
+**关于信息泄露的说明**：
+
+error_x.md 中同时包含"实际行为"和"期望行为"是故意的——这些信息帮助 AI 在迭代时理解问题本质和制定改进策略。但 error_x_fix.md 中的详细正确输出在评估模拟阶段是**禁止提前读取**的（见 Phase 2.4 的盲评协议），只有在模拟产出结果后才对比 fix 文件打分。
 
 ### 0.4 初始化 results.tsv
 
@@ -130,11 +176,21 @@ git checkout -b evolve/<skill-name>/<date-tag>
 
 ### 1.2 运行 Baseline 评估
 
-对 `eval/` 中的每个错误案例执行以下步骤：
+根据检测到的评估格式运行 baseline：
 
-1. **模拟运行**：假设你是一个使用该 skill 的 AI agent，按照 skill 的指令处理 `error_x.md` 中描述的场景
-2. **对比期望**：将你的输出与 `error_x_fix.md` 中的期望结果对比
-3. **逐项评分**：对每个错误案例给出通过/未通过判定
+**格式 A（错误案例）**：对 `eval/` 中的每个错误案例执行以下步骤（遵循盲评协议）：
+
+1. **模拟运行**：只读 `error_x.md`，假设你是一个使用该 skill 的 AI agent，按照 skill 的指令处理场景
+2. **产出输出**：记录模拟输出
+3. **对比期望**：此时才读取 `error_x_fix.md`，将模拟输出与期望结果对比
+4. **逐项评分**：对每个错误案例给出通过/未通过判定
+
+**格式 B（evals.json）**：对 `evals/evals.json` 中的每个 eval 执行：
+
+1. **模拟运行**：只读 `prompt` 和 `files`，按 skill 指令处理
+2. **产出输出**：记录模拟输出
+3. **检查 assertions**：此时才读取 `expected_output` 和 `assertions`，逐条验证
+4. **逐项评分**：计算 assertion 通过率
 
 **评分标准**：
 
@@ -239,14 +295,58 @@ LOOP:
 - 避免多变量交互导致的混乱
 - diff 简洁可审查
 
-### 2.4 AI 自评方法
+### 2.4 AI 自评方法（盲评协议）
 
-每次修改后，重新运行所有 eval 错误案例并评估：
+每次修改后，重新运行所有 eval 测试用例并评估。**严格遵循盲评协议**，防止信息泄露影响评估质量。
 
-1. **重读修改后的 skill**：完整读取更新后的 SKILL.md 和 references
-2. **逐案例模拟**：对每个 error_x.md 按新 skill 指令处理
-3. **对比 error_x_fix.md**：将输出与期望结果对比
-4. **结构化评分**：
+#### 盲评协议
+
+评估分三个阶段，**必须按顺序执行，不可提前读取后续阶段的文件**：
+
+**阶段 A：模拟运行（只读 skill + 测试输入，不读 fix）**
+
+1. 重读修改后的 skill：完整读取更新后的 `SKILL.md` 和 `references/`
+2. 读取测试输入：
+   - 错误案例格式：只读 `error_x.md`（包含场景描述、实际行为、期望行为概述）
+   - evals.json 格式：只读 `prompt` 和 `files` 字段
+3. 按照修改后的 skill 指令，模拟处理该场景，产出完整输出
+4. **将模拟输出记录下来**（写入内部评估记录，不修改任何源文件）
+
+**阶段 B：对比评分（此时才读取 fix 文件）**
+
+5. 读取期望结果：
+   - 错误案例格式：读取 `error_x_fix.md`
+   - evals.json 格式：读取 `expected_output` 和 `assertions`
+6. 将阶段 A 的模拟输出与期望结果逐项对比
+7. 对每个测试用例给出评分
+
+**阶段 C：汇总分析**
+
+8. 汇总所有评分，计算通过率
+9. 与 baseline / 上次最佳分数对比
+10. 记录到 results.tsv
+
+#### 为什么需要盲评
+
+如果 AI 在模拟运行前就知道期望的详细输出（error_x_fix.md），评估就变成了"开卷考试"——AI 会不自觉地朝已知答案靠拢，掩盖 skill 本身的不足。盲评协议确保：
+
+- 模拟运行完全基于 skill 自身的指令质量
+- 只有在产出结果后才进行对比
+- 评估结果更真实地反映 skill 的实际效果
+
+#### 评分标准
+
+| 等级 | 含义 | 分数 |
+|------|------|------|
+| PASS | 输出完全满足期望结果 | 1.0 |
+| PARTIAL | 输出部分满足，有关键缺失 | 0.5 |
+| FAIL | 输出与期望严重不符 | 0.0 |
+
+对于 evals.json 中的 assertions，逐条检查：
+- 每条通过的 assertion 计入分数
+- 最终分数 = 通过的 assertions 数 / 总 assertions 数
+
+#### 评估输出格式
 
 ```markdown
 ## 评估结果 - 迭代 #N
@@ -256,11 +356,14 @@ LOOP:
 
 ### error_001: [案例简述]
 - 评分: PASS/PARTIAL/FAIL (分数)
+- 模拟输出摘要: [阶段 A 产出的关键内容]
+- 对比分析: [与 fix 文件的具体差异]
 - 对比 baseline: [改善/持平/退步]
-- 分析: [变更对此案例的具体影响]
 
-### error_002: [案例简述]
-...
+### evals.json #1: [案例简述]
+- 评分: X/Y assertions 通过 (分数)
+- 失败 assertions: [哪些失败了，为什么]
+- 对比 baseline: [改善/持平/退步]
 
 ### 汇总
 - 总通过率: X/Y (XX%)

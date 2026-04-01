@@ -52,7 +52,7 @@ FM_NAME=""
 if command -v python &>/dev/null; then
   FM_NAME=$(python -c "
 import re, sys
-with open('$SKILL_FILE', 'r', encoding='utf-8') as f:
+with open(sys.argv[1], 'r', encoding='utf-8') as f:
     content = f.read()
 match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
 if match:
@@ -60,7 +60,7 @@ if match:
         if line.startswith('name:'):
             print(line.split(':',1)[1].strip().strip('\"').strip(\"'\"))
             break
-" 2>/dev/null || echo "")
+" "$SKILL_FILE" 2>/dev/null || echo "")
 fi
 
 if [[ -n "$FM_NAME" ]]; then
@@ -81,15 +81,15 @@ echo "--- Phase 2: Frontmatter ---"
 
 # Check YAML frontmatter exists
 FM_CONTENT=$(python -c "
-import re
-with open('$SKILL_FILE', 'r', encoding='utf-8') as f:
+import re, sys
+with open(sys.argv[1], 'r', encoding='utf-8') as f:
     content = f.read()
 match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
 if match:
     print(match.group(1))
 else:
     print('')
-" 2>/dev/null || echo "")
+" "$SKILL_FILE" 2>/dev/null || echo "")
 
 if [[ -n "$FM_CONTENT" ]]; then
   info "YAML frontmatter is parseable"
@@ -164,7 +164,8 @@ echo "--- Phase 3: Content ---"
 
 # Count body lines (after closing ---)
 BODY_LINES=$(python -c "
-with open('$SKILL_FILE', 'r', encoding='utf-8') as f:
+import sys
+with open(sys.argv[1], 'r', encoding='utf-8') as f:
     lines = f.readlines()
 count = 0
 found_end = False
@@ -177,7 +178,7 @@ for i, line in enumerate(lines):
         continue
     count += 1
 print(count)
-" 2>/dev/null || echo "0")
+" "$SKILL_FILE" 2>/dev/null || echo "0")
 
 if [[ "$BODY_LINES" -le 500 ]]; then
   info "SKILL.md body is $BODY_LINES lines (<= 500)"
@@ -188,8 +189,8 @@ else
 fi
 
 # Check for hardcoded absolute paths
-if grep -qE "/root/|/home/|/Users/|C:\\\\|D:\\\\" "$SKILL_FILE" 2>/dev/null; then
-  warn "Found hardcoded absolute paths in SKILL.md"
+if grep -qE "/root/|/home/|/Users/" "$SKILL_FILE" 2>/dev/null; then
+  warn "Found hardcoded Unix absolute paths in SKILL.md"
 else
   info "No hardcoded absolute paths detected"
 fi
