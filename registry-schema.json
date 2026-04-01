@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CC Skills Marketplace Registry",
+  "description": "Schema for the cc_skills_marketplace registry.json",
+  "type": "object",
+  "required": ["$schema", "version", "updated", "skills"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Reference to this schema file"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Registry version (SemVer)"
+    },
+    "updated": {
+      "type": "string",
+      "format": "date",
+      "description": "Last update date (YYYY-MM-DD)"
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "path", "tier", "version", "author", "license"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$",
+            "maxLength": 64,
+            "description": "Skill name, must match directory name"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "What the skill does and when to use it"
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative path to the skill directory"
+          },
+          "tier": {
+            "type": "string",
+            "enum": ["core", "standard", "basic", "experimental"],
+            "description": "Quality tier"
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^\\d+\\.\\d+\\.\\d+$",
+            "description": "Skill version (SemVer)"
+          },
+          "author": {
+            "type": "string",
+            "description": "Skill author"
+          },
+          "license": {
+            "type": "string",
+            "description": "SPDX license identifier"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Search tags"
+          },
+          "compatibility": {
+            "type": "object",
+            "description": "Runtime compatibility requirements",
+            "properties": {
+              "claude-code": {
+                "type": "string",
+                "description": "Minimum Claude Code version"
+              }
+            }
+          },
+          "install": {
+            "type": "string",
+            "description": "Installation command"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

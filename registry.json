@@ -1,0 +1,77 @@
+{
+  "$schema": "./registry-schema.json",
+  "version": "1.0.0",
+  "updated": "2026-04-02",
+  "skills": [
+    {
+      "name": "py-doc-generator",
+      "description": "分析 Python 3 源码并生成完整项目文档，包括 CLAUDE.md、架构概览、UML 图表、业务脑图和 API 参考文档。",
+      "path": "py-doc-generator",
+      "tier": "core",
+      "version": "1.0.0",
+      "author": "kongshan001",
+      "license": "Apache-2.0",
+      "tags": ["python", "documentation", "uml", "api-docs", "mermaid", "claude-md"],
+      "compatibility": {
+        "claude-code": ">=1.0.0"
+      },
+      "install": "npx skills add kongshan001/cc_skills_marketplace/py-doc-generator"
+    },
+    {
+      "name": "python-unittest-generator",
+      "description": "为现有 Python 代码库生成完整的 unittest 测试套件，支持自动化覆盖率度量，采用最小化 mock 策略。",
+      "path": "python-unittest-generator",
+      "tier": "standard",
+      "version": "1.0.0",
+      "author": "kongshan001",
+      "license": "Apache-2.0",
+      "tags": ["python", "testing", "unittest", "coverage", "unit-test"],
+      "compatibility": {
+        "claude-code": ">=1.0.0"
+      },
+      "install": "npx skills add kongshan001/cc_skills_marketplace/python-unittest-generator"
+    },
+    {
+      "name": "cc-code-setup",
+      "description": "一键生成完整的 .claude 工程目录结构，基于 Claude Code 官方文档最佳实践，支持 5 种预设模板和交互式配置。",
+      "path": "cc-code-setup",
+      "tier": "basic",
+      "version": "1.0.0",
+      "author": "kongshan001",
+      "license": "Apache-2.0",
+      "tags": ["setup", "configuration", "project-init", "templates"],
+      "compatibility": {
+        "claude-code": ">=1.0.0"
+      },
+      "install": "npx skills add kongshan001/cc_skills_marketplace/cc-code-setup"
+    },
+    {
+      "name": "cc-skills-researcher",
+      "description": "定期调研 Claude Code 热门 Skills 和插件，搜索 GitHub/ClawHub 生成调研报告并推送到远程仓库。",
+      "path": "cc-skills-researcher",
+      "tier": "basic",
+      "version": "0.1.0",
+      "author": "kongshan001",
+      "license": "Apache-2.0",
+      "tags": ["research", "skills", "survey", "github"],
+      "compatibility": {
+        "claude-code": ">=1.0.0"
+      },
+      "install": "npx skills add kongshan001/cc_skills_marketplace/cc-skills-researcher"
+    },
+    {
+      "name": "cc-plugin-researcher",
+      "description": "定期调研 Claude Code 热门 MCP 插件，搜索 GitHub/awesome-claude-code 生成调研报告并推送到远程仓库。",
+      "path": "cc-plugin-researcher",
+      "tier": "basic",
+      "version": "0.1.0",
+      "author": "kongshan001",
+      "license": "Apache-2.0",
+      "tags": ["research", "mcp", "plugins", "survey"],
+      "compatibility": {
+        "claude-code": ">=1.0.0"
+      },
+      "install": "npx skills add kongshan001/cc_skills_marketplace/cc-plugin-researcher"
+    }
+  ]
+}
