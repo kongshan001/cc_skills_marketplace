@@ -2,6 +2,9 @@
 name: cc-skill-evolver
 description: |
   基于 autoresearch 实验循环思路，持续迭代优化已有的 Claude Code skill。
+  以 skill-creator 为评估引擎，复用其 evals.json、subagent 测试、grading、
+  eval viewer、description 优化等成熟功能，在其之上叠加 autoresearch 的
+  单变量实验循环（修改 → 测试 → 保留/回滚 → 重复）。
   当用户想要改进、优化、迭代一个已有的 skill 时使用此技能。
   适用场景：用户说"优化这个 skill"、"迭代改进 skill"、"让 skill 更好"、
   "skill 效果不好需要改进"、"帮我调优 skill"、"运行 skill 进化循环"，
@@ -13,426 +16,353 @@ description: |
 
 基于 [karpathy/autoresearch](https://github.com/karpathy/autoresearch) 的实验循环思路，对已有的 Claude Code skill 进行持续迭代优化。
 
-核心理念：**修改 → 测试 → 比较结果 → 保留或回滚 → 重复**。
+**核心定位**：cc-skill-evolver 是 autoresearch 循环的**编排层**，**skill-creator 是评估执行引擎**。不重新造轮子。
+
+```
+┌─────────────────────────────────────────┐
+│  cc-skill-evolver（编排层）               │
+│  ├── autoresearch 实验循环               │
+│  ├── 单变量实验策略                      │
+│  ├── git 驱动的 keep/discard             │
+│  ├── results.tsv 追踪                   │
+│  ├── 简单性准则                          │
+│  └── 收敛检测                            │
+├───────────── 调用 ──────────────────────┤
+│  skill-creator（评估引擎）               │
+│  ├── evals.json 测试用例管理             │
+│  ├── subagent 并行测试执行               │
+│  ├── grader 自动评分                     │
+│  ├── benchmark 聚合                      │
+│  ├── eval viewer 人工审查界面            │
+│  └── description 优化循环                │
+└─────────────────────────────────────────┘
+```
+
+核心理念：**修改 → 调用 skill-creator 测试 → 比较结果 → 保留或回滚 → 重复**。
+
+## 依赖
+
+本 skill 需要以下工具已安装：
+- **skill-creator** skill — 作为评估引擎使用
+- **git** — 版本管理和 keep/discard 决策
 
 ## 设计哲学
 
-本项目从 autoresearch 中提取了以下核心原则并迁移到 skill 迭代场景：
+从 autoresearch 中提取核心原则迁移到 skill 迭代场景：
 
 | Autoresearch | Skill Evolver |
 |---|---|
-| `train.py`（唯一修改目标） | `SKILL.md` + `references/`（被迭代的 skill） |
-| `prepare.py`（只读基准） | `eval/` 错误案例（只读评估基准） |
-| `val_bpb`（量化指标） | eval 通过率 + AI 自评分数 |
+| `train.py`（唯一修改目标） | `SKILL.md` + `references/` |
+| `prepare.py`（只读基准） | `eval/` 错误案例 + `evals/evals.json` |
+| `val_bpb`（量化指标） | skill-creator benchmark 通过率 |
 | `results.tsv`（实验日志） | skill 的 `results.tsv` |
-| git commit / reset | skill 版本管理 |
+| git commit / reset | 版本管理 keep/discard |
 | 单变量实验 | 每次只改一个维度 |
 | 简单性准则 | 更简洁的 skill 版本优先 |
-| NEVER STOP | 持续迭代直到人工停止或收敛 |
 
 ## Phase 0：环境准备
 
-在开始迭代之前，需要确保目标 skill 具备正确的目录结构和评估基础设施。
-
 ### 0.1 确定目标 skill
 
-询问用户要优化哪个 skill。用户可以指定：
+询问用户要优化哪个 skill：
 - **单个 skill**：`优化 py-doc-generator 这个 skill`
 - **多个 skill**：`优化所有 skill 的触发准确度`（每个 skill 独立迭代）
 
-如果用户指定了 skill 路径，直接使用。如果没有，列出当前项目中可用的 skill 供用户选择。
+如果没有指定，列出当前项目中可用的 skill 供用户选择。
 
-### 0.2 检查目录结构
+### 0.2 检查评估基础设施
 
-目标 skill 支持两种评估格式，优先使用格式 A，如果已有格式 B 也可直接使用：
+目标 skill 需要评估基准。检查以下任一是否存在：
 
-**格式 A：错误案例格式（推荐）**
+**格式 A：错误案例（eval/ 目录）**
 
 ```
 target-skill/
-├── SKILL.md                  # 被迭代的主体（必需）
-├── eval/                     # 评估基准
-│   ├── error_001.md          # 错误案例：场景 + 实际行为 + 期望行为
-│   ├── error_001_fix.md      # 期望修复结果：正确的详细输出（评估时不提前读取）
+├── eval/
+│   ├── error_001.md          # 场景 + 实际行为 + 期望行为
+│   ├── error_001_fix.md      # 详细正确输出（盲评时才读取）
 │   ├── error_002.md
 │   ├── error_002_fix.md
 │   └── ...
-├── results.tsv               # 实验日志（自动创建）
-└── references/               # 可选的参考资源
 ```
 
-**格式 B：skill-creator evals.json 格式（兼容）**
+**格式 B：skill-creator evals.json（evals/ 目录）**
 
 ```
 target-skill/
-├── SKILL.md
 ├── evals/
-│   └── evals.json            # skill-creator 标准评估文件
-├── results.tsv
-└── references/
+│   └── evals.json            # skill-creator 标准格式
 ```
 
-`evals.json` 格式如下（来自 skill-creator 标准）：
+两种格式可以共存，会合并使用。
+
+### 0.3 引导创建评估基准
+
+如果两种格式都不存在，引导用户创建：
+
+> "要优化这个 skill，需要先建立评估基准。有两种方式：
+>
+> **方式一（推荐）**：在 `eval/` 目录下创建错误案例文件：
+> - `error_001.md`：描述一个 skill 处理不当的具体场景（含实际行为和期望行为）
+> - `error_001_fix.md`：描述期望的正确输出
+> - 建议至少 3 个错误案例
+>
+> **方式二**：在 `evals/` 目录下创建 `evals.json`，遵循 skill-creator 标准：
+> - 每个 eval 包含 prompt、expected_output、assertions
+> - 你可以说'帮我生成 evals.json'，我会引导你完成"
+
+**错误案例编写指南**：
+
+error_x.md 应该包含：
+- **场景描述**：具体的用户输入、项目上下文、文件结构等
+- **实际行为**：skill 当前的错误输出（具体示例）
+- **期望行为**：概述正确的处理方式
+
+error_x_fix.md 应该包含：
+- **正确输出**：完整的期望输出（用于评估对比，盲评时才读取）
+- **关键改进点**：具体需要改进的方面
+
+### 0.4 将错误案例转为 evals.json
+
+skill-creator 的评估引擎使用 `evals.json` 格式。如果目标 skill 只有 eval/ 错误案例，需要将其转换为 evals.json：
 
 ```json
 {
-  "skill_name": "example-skill",
+  "skill_name": "<skill-name>",
   "evals": [
     {
       "id": 1,
-      "prompt": "用户的任务描述",
-      "expected_output": "期望输出的描述",
+      "prompt": "<从 error_001.md 的场景描述中提取>",
+      "expected_output": "<从 error_001_fix.md 的正确输出中提取>",
       "files": [],
       "assertions": [
-        {"name": "assertion-name", "type": "contains", "value": "..."}
+        {"name": "覆盖所有必要步骤", "type": "contains", "value": "..."},
+        {"name": "生成完整文档套件", "type": "contains", "value": "..."}
       ]
     }
   ]
 }
 ```
 
-如果目标 skill 同时有 `eval/` 和 `evals/evals.json`，合并使用。
+将生成的 evals.json 保存到 `target-skill/evals/evals.json`。
 
-### 0.3 引导创建 eval/ 错误案例
+如果目标 skill 已有 evals.json，跳过此步骤。
 
-如果 `eval/` 目录不存在或为空，也没有 `evals/evals.json`，需要引导用户创建。
-
-**方式一：引导用户创建错误案例文件**
-
-> "要优化这个 skill，我们需要先建立评估基准。请在 eval/ 目录下创建错误案例：
-> - `error_001.md`：描述一个 skill 处理不当的具体场景
-> - `error_001_fix.md`：描述期望的正确处理结果
->
-> 每个错误案例应该是一个具体的、可复现的场景，而不是笼统的描述。
-> 建议至少创建 3 个错误案例才能开始迭代。"
-
-**方式二：引导用户创建 evals.json**
-
-> "或者，你可以在 evals/ 目录下创建 `evals.json`，遵循 skill-creator 的标准格式：
-> 包含 prompt（测试输入）、expected_output（期望输出）、assertions（断言）。"
-
-**错误案例编写指南**（向用户展示）：
-
-```markdown
-## error_x.md 格式（包含完整信息用于后续分析）
-
-### 场景描述
-描述触发此 skill 的用户输入或上下文。越具体越好，包括文件路径、项目结构、
-用户原话等。
-
-### 实际行为
-描述 skill 当前的错误行为或不足之处。包括具体的错误输出示例。
-
-### 期望行为
-描述 skill 应该如何正确处理此场景。
-
-## error_x_fix.md 格式（评估时才读取，防止信息泄露）
-
-### 正确输出
-描述 skill 应该产生的完整正确输出，包括具体的文件内容、步骤等。
-
-### 关键改进点
-- 列出具体需要改进的方面
-```
-
-**关于信息泄露的说明**：
-
-error_x.md 中同时包含"实际行为"和"期望行为"是故意的——这些信息帮助 AI 在迭代时理解问题本质和制定改进策略。但 error_x_fix.md 中的详细正确输出在评估模拟阶段是**禁止提前读取**的（见 Phase 2.4 的盲评协议），只有在模拟产出结果后才对比 fix 文件打分。
-
-### 0.4 初始化 results.tsv
-
-如果 `results.tsv` 不存在，创建它：
-
-```
-iteration	dimension	change_description	score_before	score_after	delta	status
-```
-
-字段说明：
-- `iteration`：迭代轮次编号
-- `dimension`：修改维度（trigger / workflow / reference / quality）
-- `change_description`：本次实验的具体变更描述
-- `score_before`：变更前的通过率（0.00-1.00）
-- `score_after`：变更后的通过率（0.00-1.00）
-- `delta`：分数变化（正数=改善，负数=退步）
-- `status`：keep / discard / crash / pending_review
-
-### 0.5 创建迭代分支
+### 0.5 初始化实验环境
 
 ```bash
+# 创建迭代分支
 git checkout -b evolve/<skill-name>/<date-tag>
+
+# 初始化 results.tsv（如果不存在）
+echo -e "iteration\tdimension\tchange_description\tscore_before\tscore_after\tdelta\tstatus" > results.tsv
 ```
 
-例如：`git checkout -b evolve/py-doc-generator/apr2`
+results.tsv 字段：
+- `iteration`：迭代轮次
+- `dimension`：修改维度（trigger / workflow / reference / quality）
+- `change_description`：具体变更描述
+- `score_before`：变更前通过率（0.00-1.00）
+- `score_after`：变更后通过率
+- `delta`：分数变化
+- `status`：keep / discard / crash / pending_review
 
-确认一切就绪后，进入 Phase 1。
+results.tsv 不提交到 git，它是运行时日志。
 
 ## Phase 1：建立 Baseline
 
-在开始任何修改之前，必须先建立当前 skill 的性能基准。
-
 ### 1.1 读取完整 skill
 
-读取目标 skill 的 `SKILL.md` 和所有 `references/` 文件，完整理解其当前行为。
+读取目标 skill 的 `SKILL.md` 和所有 `references/` 文件。
 
-### 1.2 运行 Baseline 评估
+### 1.2 调用 skill-creator 运行 Baseline 评估
 
-根据检测到的评估格式运行 baseline：
+**这一步直接调用 skill-creator 的评估流程**。使用 Skill 工具调用 skill-creator，让它：
 
-**格式 A（错误案例）**：对 `eval/` 中的每个错误案例执行以下步骤（遵循盲评协议）：
+1. 读取 evals.json 中的测试用例
+2. 为每个测试用例启动 subagent（with-skill 模式）
+3. 使用 grader 评分
+4. 聚合 benchmark 数据
 
-1. **模拟运行**：只读 `error_x.md`，假设你是一个使用该 skill 的 AI agent，按照 skill 的指令处理场景
-2. **产出输出**：记录模拟输出
-3. **对比期望**：此时才读取 `error_x_fix.md`，将模拟输出与期望结果对比
-4. **逐项评分**：对每个错误案例给出通过/未通过判定
+向 skill-creator 传达的指令：
 
-**格式 B（evals.json）**：对 `evals/evals.json` 中的每个 eval 执行：
+> "对 skill `<path-to-skill>` 运行一次评估。使用 `evals/evals.json` 中的测试用例。
+> 这是 baseline 运行，不需要 baseline 对比。
+> 将结果保存到 `<skill-path>-workspace/iteration-0/`。
+> 请完成 eval 执行、grading、benchmark 聚合。"
 
-1. **模拟运行**：只读 `prompt` 和 `files`，按 skill 指令处理
-2. **产出输出**：记录模拟输出
-3. **检查 assertions**：此时才读取 `expected_output` 和 `assertions`，逐条验证
-4. **逐项评分**：计算 assertion 通过率
-
-**评分标准**：
-
-| 等级 | 含义 | 分数 |
-|------|------|------|
-| PASS | 输出完全满足期望结果 | 1.0 |
-| PARTIAL | 输出部分满足，有关键缺失 | 0.5 |
-| FAIL | 输出与期望严重不符 | 0.0 |
+如果 skill-creator 不可用或用户偏好快速评估，可以降级为内联模拟：
+- 对每个 evals.json 中的 prompt，按 skill 指令模拟处理
+- 用 assertions 逐条验证
+- 记录通过率
 
 ### 1.3 记录 Baseline
 
-将 baseline 结果记录到 `results.tsv`：
+将 skill-creator 返回的 benchmark 数据记录到 results.tsv：
 
 ```
 0	baseline	初始状态评估	-	0.XX	-	baseline
 ```
 
-同时记录每个错误案例的详细评分到 `eval/baseline_scores.md`：
+## Phase 2：实验循环（核心）
 
-```markdown
-## Baseline 评估结果
-
-### error_001: [案例简述]
-- 评分: PASS/PARTIAL/FAIL (分数)
-- 分析: [为什么失败/成功]
-
-### error_002: [案例简述]
-...
-```
-
-## Phase 2：实验循环
-
-这是核心循环，类似 autoresearch 的 NEVER STOP 循环。
+这是 autoresearch 的 NEVER STOP 循环。每次迭代复用 skill-creator 的评估能力。
 
 ### 2.1 循环流程
 
 ```
 LOOP:
-  1. 分析当前状态（results.tsv 历史 + eval 错误案例）
+  1. 分析当前状态（results.tsv + evals.json + 上轮 benchmark）
   2. 选择一个单变量改进方向
   3. 修改 skill 的一个方面
-  4. 运行 eval 测试
-  5. AI 自评打分
-  6. 对比 baseline / 上次最佳分数
-  7. 决策：keep（改善）或 discard（退步/持平）
+  4. git commit
+  5. 调用 skill-creator 运行评估
+  6. 读取 benchmark 结果
+  7. 决策：keep / discard / pending_review
   8. 记录到 results.tsv
-  9. 继续循环
+  9. 继续循环（直到停止条件触发）
 ```
 
-### 2.2 改进维度与策略
+### 2.2 改进维度
 
-每次迭代选择以下**一个**维度进行改进：
+每次迭代选择**一个**维度：
 
-#### 维度 1：触发准确度（trigger）
+#### trigger（触发准确度）
 - **修改对象**：SKILL.md 的 `description` 字段
-- **改进策略**：
-  - 补充遗漏的触发场景
-  - 消除误触发的边界情况
-  - 添加更具体的"何时使用"描述
-  - 参考 skill-creator 的 description 优化方法
-- **验证方法**：检查错误案例中是否有因 skill 未被正确触发导致的问题
+- **策略**：补充触发场景、消除误触发、添加具体的使用上下文
+- **进阶**：可以调用 skill-creator 的 description 优化循环（`scripts.run_loop`），自动化生成候选 description 并用 trigger eval 筛选最优解
 
-#### 维度 2：工作流质量（workflow）
+#### workflow（工作流质量）
 - **修改对象**：SKILL.md 的工作流步骤
-- **改进策略**：
-  - 添加缺失的处理步骤
-  - 优化步骤顺序
-  - 增加错误处理分支
-  - 改进指令清晰度（解释"为什么"而非只说"做什么"）
-  - 删除冗余或无效的步骤
-- **验证方法**：检查错误案例中是否有因工作流不完整或步骤不清晰导致的问题
+- **策略**：添加缺失步骤、优化顺序、增加错误处理、改进指令清晰度、删除冗余步骤
 
-#### 维度 3：参考资源（reference）
+#### reference（参考资源）
 - **修改对象**：`references/` 目录下的文件
-- **改进策略**：
-  - 添加缺失的模板或示例
-  - 优化现有模板的实用性
-  - 增加边界情况的处理指南
-  - 删除未使用的参考文件
-- **验证方法**：检查错误案例中是否有因缺少参考资源导致的问题
+- **策略**：添加缺失模板、优化现有模板、增加边界情况指南、删除未使用文件
 
-#### 维度 4：质量保障（quality）
+#### quality（质量保障）
 - **修改对象**：SKILL.md 的质量规则、反模式、检查清单
-- **改进策略**：
-  - 添加新的反模式规则
-  - 增加质量检查清单项
-  - 补充边界情况处理
-  - 添加从错误案例中提炼的新规则
-- **验证方法**：检查错误案例中是否有因缺少质量规则导致的问题
+- **策略**：添加反模式规则、增加检查清单项、从错误案例提炼新规则
 
 ### 2.3 单变量实验规则
 
-**严格要求**：每次迭代只修改一个方面。
+**严格要求**：每次只改一个方面。
 
-- 如果修改 `description` 字段，不动其他内容
-- 如果修改 Phase 2 的某个步骤，不动其他 Phase
-- 如果添加一个 reference 文件，不动 SKILL.md 的指令部分
-- 如果修改质量规则，不动工作流步骤
+- 修改 `description` → 不动其他内容
+- 修改某个 Phase 的步骤 → 不动其他 Phase
+- 添加 reference 文件 → 不动 SKILL.md 指令部分
+- 修改质量规则 → 不动工作流步骤
 
-这样做的好处：
-- 可以精确归因每个变更的效果
-- 避免多变量交互导致的混乱
-- diff 简洁可审查
+好处：精确归因、避免多变量交互、diff 简洁可审查。
 
-### 2.4 AI 自评方法（盲评协议）
+### 2.4 调用 skill-creator 运行评估
 
-每次修改后，重新运行所有 eval 测试用例并评估。**严格遵循盲评协议**，防止信息泄露影响评估质量。
+每次修改并 git commit 后，**调用 skill-creator 重新运行评估**：
 
-#### 盲评协议
+向 skill-creator 传达的指令：
 
-评估分三个阶段，**必须按顺序执行，不可提前读取后续阶段的文件**：
+> "对修改后的 skill `<path-to-skill>` 运行评估。
+> 使用 `evals/evals.json` 中的测试用例。
+> 同时运行 with-skill 版本。
+> 将结果保存到 `<skill-path>-workspace/iteration-N/`。
+> 如果有上一次迭代的结果，用 `--previous-workspace` 参数指向它。
+> 请完成 eval 执行、grading、benchmark 聚合，并启动 eval viewer。"
 
-**阶段 A：模拟运行（只读 skill + 测试输入，不读 fix）**
+skill-creator 会：
+1. 为每个 eval 启动 subagent 执行
+2. 使用 grader 评估 assertions
+3. 聚合为 benchmark.json（包含 pass_rate、timing、tokens）
+4. 启动 eval viewer 供人工查看
 
-1. 重读修改后的 skill：完整读取更新后的 `SKILL.md` 和 `references/`
-2. 读取测试输入：
-   - 错误案例格式：只读 `error_x.md`（包含场景描述、实际行为、期望行为概述）
-   - evals.json 格式：只读 `prompt` 和 `files` 字段
-3. 按照修改后的 skill 指令，模拟处理该场景，产出完整输出
-4. **将模拟输出记录下来**（写入内部评估记录，不修改任何源文件）
+### 2.5 读取评估结果
 
-**阶段 B：对比评分（此时才读取 fix 文件）**
+从 skill-creator 产出的 benchmark 数据中提取关键指标：
 
-5. 读取期望结果：
-   - 错误案例格式：读取 `error_x_fix.md`
-   - evals.json 格式：读取 `expected_output` 和 `assertions`
-6. 将阶段 A 的模拟输出与期望结果逐项对比
-7. 对每个测试用例给出评分
+- `pass_rate`：通过率（核心指标，类似 autoresearch 的 val_bpb）
+- 逐 eval 的 assertion 通过情况
+- timing 和 token 使用数据
 
-**阶段 C：汇总分析**
+如果 skill-creator 产出了 eval viewer，告知用户可以查看：
+> "评估已完成，eval viewer 已启动。你可以在浏览器中查看每个测试用例的详细输出和评分。看完后告诉我反馈。"
 
-8. 汇总所有评分，计算通过率
-9. 与 baseline / 上次最佳分数对比
-10. 记录到 results.tsv
+### 2.6 读取人工反馈（可选）
 
-#### 为什么需要盲评
+如果用户通过 eval viewer 提交了 feedback.json，读取并纳入决策：
 
-如果 AI 在模拟运行前就知道期望的详细输出（error_x_fix.md），评估就变成了"开卷考试"——AI 会不自觉地朝已知答案靠拢，掩盖 skill 本身的不足。盲评协议确保：
-
-- 模拟运行完全基于 skill 自身的指令质量
-- 只有在产出结果后才进行对比
-- 评估结果更真实地反映 skill 的实际效果
-
-#### 评分标准
-
-| 等级 | 含义 | 分数 |
-|------|------|------|
-| PASS | 输出完全满足期望结果 | 1.0 |
-| PARTIAL | 输出部分满足，有关键缺失 | 0.5 |
-| FAIL | 输出与期望严重不符 | 0.0 |
-
-对于 evals.json 中的 assertions，逐条检查：
-- 每条通过的 assertion 计入分数
-- 最终分数 = 通过的 assertions 数 / 总 assertions 数
-
-#### 评估输出格式
-
-```markdown
-## 评估结果 - 迭代 #N
-
-### 维度: [trigger/workflow/reference/quality]
-### 变更描述: [具体改了什么]
-
-### error_001: [案例简述]
-- 评分: PASS/PARTIAL/FAIL (分数)
-- 模拟输出摘要: [阶段 A 产出的关键内容]
-- 对比分析: [与 fix 文件的具体差异]
-- 对比 baseline: [改善/持平/退步]
-
-### evals.json #1: [案例简述]
-- 评分: X/Y assertions 通过 (分数)
-- 失败 assertions: [哪些失败了，为什么]
-- 对比 baseline: [改善/持平/退步]
-
-### 汇总
-- 总通过率: X/Y (XX%)
-- 对比 baseline: +X.XX / -X.XX / 持平
+```json
+{
+  "reviews": [
+    {"run_id": "eval-0-with_skill", "feedback": "具体反馈内容"},
+    ...
+  ]
+}
 ```
 
-### 2.5 决策规则
+人工反馈是最终决策的重要参考。如果反馈指出严重问题，即使 pass_rate 提升也可以 discard。
+
+### 2.7 决策规则
 
 #### keep（保留）
-- 通过率提高 ≥ 0.05（相对提升）
-- 或通过率持平但 skill 更简洁（删除代码/步骤得到同等效果）
+- pass_rate 提高 ≥ 0.05
+- 或 pass_rate 持平但 skill 更简洁（删除代码得到同等效果）
+- 人工反馈正面
 
 #### discard（回退）
-- 通过率下降
-- 或通过率持平且 skill 变更增加了不必要的复杂度
+- pass_rate 下降
+- 或 pass_rate 持平且变更增加了不必要复杂度
+- 人工反馈负面
 
 #### pending_review（待人工审核）
-- 通过率提高但 < 0.05（微小改善）
-- 或变更涉及 skill 的核心设计决策
-- 或连续 3 次迭代未产生明显改善
+- pass_rate 提高但 < 0.05
+- 变更涉及核心设计决策
+- 连续 3 次迭代无明显改善
 
 #### crash（失败）
-- 修改后 skill 格式错误、无法触发、或产生严重问题
+- skill 格式错误、无法触发、subagent 执行异常
 
-### 2.6 Git 操作
+### 2.8 Git 操作
 
 ```bash
-# 修改前先记录当前状态
+# 修改前先 commit
 git add -A && git commit -m "experiment: <迭代描述>"
 
-# 如果 keep：保持 commit，继续
-# 如果 discard：
-git reset --hard HEAD~1
-
-# 如果 pending_review：保持 commit，标记等待人工审核
+# keep → 保持 commit，继续
+# discard → git reset --hard HEAD~1
+# pending_review → 保持 commit，标记
 ```
 
-**重要**：`results.tsv` 不提交到 git（加入 .gitignore），它只是运行时日志。
+### 2.9 简单性准则
 
-### 2.7 简单性准则
-
-移植自 autoresearch 的设计哲学：
+移植自 autoresearch：
 
 > 同等效果下，更简单的 skill 版本优先。
 
-具体规则：
-- 通过率提升 < 0.05 但增加了 20+ 行指令 → 可能不值得，考虑 discard
-- 通过率提升 < 0.05 但是来自删除冗余指令 → 值得 keep
-- 通过率持平但 skill 更简洁 → keep（简化胜利）
-- 通过率提升 ≥ 0.05 → 通常值得 keep，除非引入了严重的技术债
+- pass_rate 提升 < 0.05 但增加 20+ 行 → 考虑 discard
+- pass_rate 提升 < 0.05 但来自删除冗余指令 → keep
+- pass_rate 持平但 skill 更简洁 → keep（简化胜利）
+- pass_rate 提升 ≥ 0.05 → 通常 keep
 
-### 2.8 停止条件
+### 2.10 停止条件
 
-与 autoresearch 不同，我们不采用 NEVER STOP。合理的停止条件：
+1. **人工中断**：用户说"停止"或"暂停"
+2. **收敛**：连续 5 次迭代 pass_rate 未提升超过 0.02
+3. **全部通过**：所有 eval 的 pass_rate 达到 1.0
+4. **兜底**：单次循环不超过 20 轮
 
-1. **人工中断**：用户明确说"停止"或"暂停"
-2. **收敛**：连续 5 次迭代通过率未提升超过 0.02
-3. **全部通过**：所有 eval 错误案例都通过（PASS）
-4. **兜底限制**：单次迭代循环不超过 20 轮
+达到停止条件后汇报：迭代次数、baseline → 最终 pass_rate 变化、results.tsv 完整日志。
 
-达到停止条件后，向用户汇报：
-- 总迭代次数
-- baseline → 最终的通过率变化
-- results.tsv 完整日志
-- 建议是否需要人工审核某些变更
+### 2.11 触发准确度专项优化
+
+当迭代维度为 `trigger` 时，除了常规的单变量实验，还可以调用 skill-creator 的 **description 优化循环**：
+
+1. 调用 skill-creator 生成 20 个 trigger eval queries（should-trigger / should-not-trigger）
+2. 让用户审核这些 queries
+3. 运行 `scripts.run_loop` 自动化优化 description（最多 5 轮）
+4. 选择 test score 最高的 description 作为最优解
+
+这比手动逐条修改 description 高效得多。
 
 ## Phase 3：汇报与交付
-
-迭代循环结束后：
 
 ### 3.1 生成迭代报告
 
@@ -445,76 +375,69 @@ git reset --hard HEAD~1
 - 目标 Skill: [skill-name]
 - 迭代分支: [branch-name]
 - 总迭代次数: X
-- Baseline 通过率: XX% → 最终通过率: XX%
+- Baseline pass_rate: XX% → 最终 pass_rate: XX%
 
 ## 迭代历史
 | # | 维度 | 变更 | 前 | 后 | Δ | 状态 |
 |---|------|------|----|----|---|------|
-| 1 | workflow | ... | 0.60 | 0.75 | +0.15 | keep |
-| ... |
 
 ## 保留的改进
-- [列出所有 keep 的变更及其效果]
-
 ## 回退的尝试
-- [列出所有 discard 的变更及失败原因]
-
 ## 待审核项
-- [列出所有 pending_review 的变更]
-
 ## 建议
-- [下一步优化方向的建议]
 ```
 
 ### 3.2 清理
 
 - 将 `results.tsv` 移到 `eval/results.tsv` 归档
-- 如果有待审核项，提醒用户检查
-- 询问用户是否要合并迭代分支到主分支
+- 提醒用户检查 pending_review 项
+- 询问是否合并迭代分支
 
 ## 多 Skill 批量模式
 
-当用户指定多个 skill 时：
-
-1. 为每个 skill 创建独立的迭代分支
+1. 为每个 skill 创建独立迭代分支
 2. 每个 skill 独立运行 Phase 0-3
-3. 依次处理，不并行（避免资源冲突）
+3. 依次处理，不并行
 4. 全部完成后生成总览报告
 
 ## eval/ 错误案例维护
 
-在迭代过程中，如果发现：
-
-- **新的失败模式**：应建议用户添加新的 error_x.md + error_x_fix.md
-- **已修复的案例变为退化**：记录并在汇报中强调
+迭代过程中如果发现：
+- **新的失败模式**：建议用户添加新的 error_x.md + error_x_fix.md
+- **已修复的案例退化**：记录并在汇报中强调
 - **案例质量不佳**：建议用户改进案例描述
 
-错误案例是整个迭代系统的基础。案例质量直接决定迭代质量。
+错误案例是评估的基础。案例质量直接决定迭代质量。
 
-## 质量保障
+## evals.json 维护
 
-### Anti-patterns（反模式）
+随着 skill 迭代，evals.json 也可能需要更新：
+- 如果错误案例有新增/修改，重新生成对应的 evals.json 条目
+- 如果 skill 的功能范围扩展，可以添加新的 eval 测试用例
+- evals.json 的 assertions 应该保持客观可验证
 
-以下行为应避免：
+## Anti-patterns（反模式）
 
 1. **多变量修改**：一次改多个维度，无法归因效果
-2. **过度拟合**：只针对特定错误案例调参，损害通用性
-3. **盲目堆叠**：持续添加规则而不删减，导致 skill 膨胀
-4. **忽视简单性**：为了微小改善牺牲 skill 的可读性和简洁性
-5. **跳过 baseline**：没有 baseline 就无法衡量改进
-6. **忽略 crash 分析**：crash 包含重要信息，应分析原因
-7. **过度迭代**：收敛后继续迭代是浪费资源
+2. **过度拟合**：只针对特定 eval 调参，损害通用性
+3. **盲目堆叠**：持续添加规则不删减，导致 skill 膨胀
+4. **忽视简单性**：微小改善牺牲可读性和简洁性
+5. **跳过 baseline**：无法衡量改进
+6. **忽略 crash**：crash 包含重要信息
+7. **过度迭代**：收敛后继续迭代浪费资源
+8. **绕过 skill-creator**：重新实现 eval/grading/viewer 而非复用
 
-### 检查清单
+## 检查清单
 
-每次迭代前检查：
+每次迭代前：
 - [ ] 只修改了一个维度
-- [ ] 修改范围最小化（只改必要的部分）
-- [ ] eval/ 错误案例全部可读且有效
-- [ ] results.tsv 正确记录了上次结果
+- [ ] 修改范围最小化
+- [ ] evals.json 测试用例有效
+- [ ] results.tsv 记录了上次结果
 
-每次迭代后检查：
-- [ ] 所有 eval 错误案例都重新评估了
+每次迭代后：
+- [ ] skill-creator 评估已完成
+- [ ] benchmark 数据已读取
 - [ ] results.tsv 已更新
-- [ ] git 状态正确（keep = 有新 commit，discard = 已 reset）
+- [ ] git 状态正确
 - [ ] 简单性准则已考虑
