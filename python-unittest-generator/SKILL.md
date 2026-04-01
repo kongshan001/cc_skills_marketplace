@@ -1,18 +1,29 @@
 ---
 name: python-unittest-generator
 description: >
-  为现有 Python 代码库生成完整的 unittest 测试套件，支持自动化覆盖率度量。
+  为现有 Python 代码库生成完整的测试套件，支持自动化覆盖率度量。
+  默认使用 pytest（Python 社区推荐），也可使用 unittest（标准库自带）。
   当用户想要创建单元测试、提升测试覆盖率、为现有 Python 代码生成测试用例、
-  或搭建基于 unittest 的测试框架时，应使用本技能。
-  当用户提到"unittest"、"单元测试"、"测试覆盖率"、"测试生成"、"测试框架"、
-  "自动化测试"，或希望通过自动化测试验证代码质量时，也应触发本技能——
-  即使用户没有明确提到"测试框架"。
+  或搭建测试框架时，应使用本技能。
+  当用户提到"pytest"、"unittest"、"单元测试"、"测试覆盖率"、"测试生成"、
+  "测试框架"、"自动化测试"、"mutation testing"、"变异测试"、"属性测试"、
+  "property testing"、"Hypothesis"、"mutmut"，或希望通过自动化测试验证代码质量时，
+  也应触发本技能——即使用户没有明确提到"测试框架"。
 ---
 
-# Python Unittest 测试生成器
+# Python 测试生成器
 
-为现有 Python 项目生成完整的 `unittest` 测试套件，目标覆盖率达到 90% 以上，
+为现有 Python 项目生成完整的测试套件，目标覆盖率达到 90% 以上，
 测试代码放在独立目录中，绝不触碰生产代码。
+
+## 框架选择
+
+- **pytest**（默认）：Python 社区推荐，语法简洁（`assert` 原生断言），生态丰富。
+  使用 `@pytest.fixture`、`conftest.py`、`pytest.mark.parametrize`。
+- **unittest**：Python 标准库自带，零依赖。使用 `unittest.TestCase`、`setUp/tearDown`。
+
+根据用户明确要求选择框架；未指定则默认 pytest。两种框架的模板见阶段三，
+详细模式差异见 `references/pytest-patterns.md`（pytest）和下方模板（unittest）。
 
 ## 触发条件
 
@@ -40,16 +51,29 @@ description: >
 
 创建一个**独立隔离**的测试目录，镜像源码布局：
 
+**pytest 模式**：
+```
+<测试根目录>/
+├── conftest.py               # 共享 fixture
+├── run_tests_with_coverage.py # 主入口
+├── unit/                     # 单元测试，镜像 src 结构
+│   ├── __init__.py
+│   ├── test_<模块>.py
+│   └── ...
+└── reports/                  # 覆盖率报告输出目录
+```
+
+**unittest 模式**：
 ```
 <测试根目录>/
 ├── __init__.py
-├── test_helpers.py           # 共享工具函数（不是 pytest 的 conftest）
-├── run_tests_with_coverage.py # 主入口：发现并运行所有测试
-├── unit/                     # 单元测试，镜像 src 结构
+├── test_helpers.py           # 共享工具函数
+├── run_tests_with_coverage.py
+├── unit/
 │   ├── __init__.py
-│   ├── test_<模块>.py        # 每个源码模块对应一个测试文件
+│   ├── test_<模块>.py
 │   └── ...
-└── reports/                  # 覆盖率报告输出目录
+└── reports/
 ```
 
 关键规则：
@@ -59,19 +83,55 @@ description: >
 
 ### 阶段三：生成测试文件
 
-为每个源码模块生成对应的 `test_<模块>.py`，使用以下模板：
+为每个源码模块生成对应的 `test_<模块>.py`。
+
+#### pytest 模板（默认）
 
 ```python
-"""<模块路径> 的测试 —— 自动生成的 unittest 测试套件。"""
+"""<模块路径> 的测试。"""
+import pytest
+from unittest.mock import patch, MagicMock
+import json
+import os
+import tempfile
+
+from <模块导入路径> import <类名>, <函数名>
+
+
+class Test<类名>:
+    """<类名> 的全面测试。"""
+
+    def test_init_default(self):
+        """测试默认初始化。"""
+        obj = <类名>()
+        assert obj.field == expected
+
+    def test_init_custom_params(self):
+        """测试自定义参数初始化。"""
+        obj = <类名>(param=value)
+        assert obj.param == value
+
+    def test_init_invalid_params(self):
+        """测试无效参数被拒绝。"""
+        with pytest.raises(ValueError):
+            <类名>(param=invalid_value)
+
+    # 每个公共方法需要：正常路径、边界情况、错误路径
+```
+
+详细模式见 `references/pytest-patterns.md`（fixture、参数化、mock 模式等）。
+
+#### unittest 模板
+
+```python
+"""<模块路径> 的测试 —— unittest 测试套件。"""
 import unittest
-from unittest.mock import patch, MagicMock, PropertyMock, call
+from unittest.mock import patch, MagicMock
 import json
 import os
 import sys
 import tempfile
-import time
 
-# 确保源码可导入
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '<src相对路径>'))
 
 from <模块导入路径> import <类名>, <函数名>
@@ -127,7 +187,7 @@ if __name__ == '__main__':
 1. **每个公共方法至少 3 个测试**：正常路径、边界情况、错误情况。
 2. **数据类（dataclass）**：测试字段默认值、自定义值、序列化（`to_dict`、`to_json`）。
 3. **有分支的方法**：每个分支一个测试（使用 mock 控制分支条件）。
-4. **抛出异常的方法**：用 `self.assertRaises` 测试每个异常路径。
+4. **抛出异常的方法**：pytest 用 `pytest.raises`，unittest 用 `self.assertRaises`。
 5. **返回 Optional 的方法**：测试有值和 None 两种路径。
 6. **类方法/静态方法**：尽可能不依赖完整类设置直接测试。
 7. **外部依赖尽量少 mock**：仅 mock 不可控的网络请求（`requests`）、
@@ -137,6 +197,8 @@ if __name__ == '__main__':
 8. **平台特定导入**（win32api 等）：仅在当前平台不可用时才 mock；测试回退路径。
 9. **上下文管理器**：测试 `__enter__`/`__exit__` 行为。
 10. **属性（property）**：测试 getter 行为；如需则 mock 底层数据。
+11. **pytest 特有**：优先使用 `@pytest.mark.parametrize` 进行参数化测试，
+    使用 `conftest.py` 共享 fixture，使用 `tmp_path` fixture 处理临时文件。
 
 ### 阶段四：Mock 策略（最小化原则）
 
@@ -242,7 +304,7 @@ def test_save_to_file(self):
 # @patch('builtins.open', mock_open(read_data='{"test_case": "测试"}'))
 ```
 
-#### 子进程隔离
+#### 子进程隔离（unittest 模式）
 
 为避免不同测试文件间的 mock 泄漏（`sys.modules` 级别的 mock 注入
 在串行运行时会产生残留），覆盖率运行脚本应**为每个测试模块启动独立子进程**，
@@ -262,55 +324,45 @@ for test_file in test_files:
 subprocess.run([sys.executable, "-m", "coverage", "combine"] + cov_files)
 ```
 
+> pytest 模式下无需子进程隔离。`pytest-xdist`（`pytest -n auto`）天然隔离每个 worker，
+> 且 pytest 的 mock 机制不会污染 `sys.modules`。
+
 ### 阶段五：覆盖率配置
 
-创建覆盖率运行脚本：
+#### pytest 模式
+
+推荐使用 `pyproject.toml` 配置：
+
+```toml
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--cov=src", "--cov-branch", "--cov-report=term-missing", "--cov-report=html:tests/reports/html"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
+```
+
+运行命令：`pytest --cov=src --cov-branch --cov-fail-under=90`
+
+#### unittest 模式
+
+创建 `run_tests_with_coverage.py`，使用子进程隔离运行每个测试模块：
 
 ```python
-#!/usr/bin/env python
-"""运行所有 unittest 测试并度量覆盖率。"""
-import unittest
-import coverage
-import sys
-import os
+# 每个模块独立子进程运行，避免 sys.modules 级别的 mock 泄漏
+for test_file in test_files:
+    cmd = [sys.executable, "-m", "coverage", "run",
+           "--data-file", f".coverage.unit_{module_name}",
+           "--source", "src", "--branch",
+           "-m", "unittest", f"unittest_tests.unit.{module_name}"]
+    subprocess.run(cmd)
 
-# 配置覆盖率
-cov = coverage.Coverage(
-    source=['<源码包>'],
-    omit=['*/unittest_tests/*', '*/tests/*', '*/test_*.py', '*/__pycache__/*'],
-    branch=True
-)
-cov.start()
-
-# 发现并运行测试
-loader = unittest.TestLoader()
-suite = loader.discover('<测试根目录>', pattern='test_*.py')
-runner = unittest.TextTestRunner(verbosity=2)
-result = runner.run(suite)
-
-cov.stop()
-cov.save()
-
-# 输出报告
-print('\n' + '=' * 60)
-print('覆盖率报告')
-print('=' * 60)
-cov.report(show_missing=True)
-
-# 生成 HTML 报告
-html_dir = os.path.join(os.path.dirname(__file__), 'reports', 'html')
-cov.html_report(directory=html_dir)
-print(f'\nHTML 报告：{html_dir}/index.html')
-
-# 低于阈值则失败
-total = cov.report()
-if total < 90:
-    print(f'\n失败：覆盖率 {total:.1f}% 低于 90% 阈值')
-    sys.exit(1)
-
-if result.failures or result.errors:
-    sys.exit(1)
+# 合并所有覆盖率数据
+subprocess.run([sys.executable, "-m", "coverage", "combine"] + cov_files)
 ```
+
+详细脚本见 `game-auto-test/unittest_tests/run_tests_with_coverage.py`。
 
 ### 阶段六：执行与验证
 
@@ -340,98 +392,17 @@ if result.failures or result.errors:
 
 ### 具体指导
 
-#### 应该使用真实实现的场景
+**应该使用真实实现**：文件 I/O（`tempfile`）、JSON 序列化、数据类操作、
+PIL 图像处理、numpy 运算、正则匹配——构造已知输入，验证真实输出。
 
-```python
-# 好：真实文件操作，用 tempfile 隔离
-def test_save_to_file(self):
-    mem = StateMemory()
-    mem.set_test_case("测试")
-    mem.add_action("click", "btn", "点击")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        filepath = os.path.join(tmpdir, "output.json")
-        mem.save_to_file(filepath)  # 真实的文件写入
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)     # 真实的文件读取和 JSON 解析
-        self.assertEqual(data["test_case"], "测试")
+**必要时才 mock**：网络请求（`requests`）、平台特定调用（`win32gui`）、
+有副作用的操作（`pydirectinput`）。
 
-# 好：真实的数据类操作
-def test_action_record_to_dict(self):
-    record = ActionRecord(step=1, action="click", target="btn", description="点击")
-    d = record.to_dict()  # 真实的 dataclass 转换
-    self.assertIsInstance(d, dict)
-    self.assertEqual(d["step"], 1)
-
-# 好：真实的图像编码
-def test_encode_image(self):
-    client = GLMClient(api_key="test_key")
-    img = Image.new("RGB", (100, 100), color="red")  # 真实的 PIL 图像
-    encoded = client._encode_image(img)               # 真实的 base64 编码
-    decoded = base64.b64decode(encoded)
-    self.assertTrue(len(decoded) > 0)
-
-# 好：真实的正则匹配测试
-def test_extract_steps_click(self):
-    result = TestCaseParser.parse("点击登录按钮")  # 真实的正则解析
-    self.assertEqual(result["steps"][0]["action"], "click")
-```
-
-#### 只有在必要时才 mock 的场景
-
-```python
-# 必要 mock：真实的网络请求不可控
-@patch('src.utils.glm_client.requests.Session')
-def test_chat_timeout(self, mock_session):
-    # 真实环境中无法可靠模拟超时，必须 mock
-    mock_session.return_value.post.side_effect = requests.exceptions.Timeout()
-    ...
-
-# 必要 mock：平台特定的系统调用
-# 当前操作系统不是 Windows 时，win32gui 不存在，必须 mock
-@patch('src.action.window_manager.win32gui')
-def test_get_window_by_title(self, mock_win32):
-    ...
-
-# 必要 mock：会产生副作用的操作（鼠标点击、键盘输入）
-@patch('src.action.input_executor.pydirectinput')
-def test_click(self, mock_pdi):
-    # 真实点击会干扰用户操作，必须 mock
-    ...
-```
-
-#### 不应该 mock 的场景
-
-```python
-# 错误：mock 了不需要 mock 的东西
-@patch('json.dumps')  # json 是标准库，不需要 mock
-def test_to_json(self, mock_dumps):
-    mock_dumps.return_value = '{"test": true}'
-    ...
-
-# 正确：直接调用真实的 json.dumps
-def test_to_json(self):
-    mem = StateMemory()
-    mem.set_test_case("测试")
-    result = mem.to_json()  # 真实的 JSON 序列化
-    data = json.loads(result)
-    self.assertEqual(data["test_case"], "测试")
-
-# 错误：mock 了被测类的内部方法
-@patch.object(MyClass, '_internal_method')
-def test_public_method(self, mock_internal):
-    ...
-
-# 正确：测试真实的公共方法行为，让内部方法真实执行
-def test_public_method(self):
-    obj = MyClass()
-    result = obj.public_method("input")  # _internal_method 真实执行
-    self.assertEqual(result, expected)
-```
+**绝不要 mock**：标准库（`json`、`re`、`base64`）、被测类的内部方法、纯逻辑函数。
 
 ### Mock 审计检查
 
-在完成测试编写后，逐一检查每个 `patch`、`Mock`、`MagicMock` 的使用，
-问自己三个问题：
+在完成测试编写后，逐一检查每个 `patch`、`Mock`、`MagicMock` 的使用：
 
 1. **如果不 mock，测试会失败吗？** 如果不会失败，删掉 mock。
 2. **mock 是否改变了被测代码的执行路径？** 如果是，这个 mock 是必要的。
@@ -445,8 +416,9 @@ def test_public_method(self):
 - **不要把 `assertRaises` 当作笼统的捕获**——验证特定的异常类型。
 - **不要 mock 被测类本身**——只 mock 它的依赖。
 - **不要创建相互依赖的测试**——每个测试必须自包含。
-- **不要硬编码文件路径**——使用 `os.path.join` 和 `tempfile`。
-- **不要导入 pytest**——本技能仅使用 `unittest`。
+- **不要硬编码文件路径**——使用 `os.path.join` 和 `tempfile`（pytest 用 `tmp_path` fixture）。
+- **不要在 pytest 测试中使用 unittest.TestCase**——pytest 模式下使用原生 `assert` 和 fixture。
+- **不要在 unittest 测试中导入 pytest**——unittest 模式下只用标准库。
 - **不要 mock 标准库和纯逻辑**——`json`、`re`、`time`、`os.path`、数据类操作等应使用真实实现。
 - **不要 mock 被测模块的内部方法**——测试公共接口，让内部逻辑真实执行。
 - **不要为了提高覆盖率而过度 mock**——高覆盖率 + 大量 mock = 虚假的信心。
@@ -462,3 +434,35 @@ def test_public_method(self):
 - [ ] 测试从独立目录运行
 - [ ] 已生成 HTML 覆盖率报告
 - [ ] 单一 `run_tests_with_coverage.py` 脚本即可运行所有内容
+- [ ] 关键路径的测试使用了真实数据而非硬编码值
+- [ ] 每个异常处理路径都有对应的测试
+- [ ] 测试执行时间 < 30 秒（整体）
+- [ ] 无测试间的顺序依赖（随机顺序仍全部通过）
+- [ ] Mock 审计三问已逐项检查并通过
+
+## 阶段七：质量增强（可选）
+
+当覆盖率达到 90% 且所有测试通过后，可执行以下质量增强步骤：
+
+### 变异测试
+
+变异测试验证测试的有效性——对源码做微小修改（如 `>` 改为 `>=`、`and` 改为 `or`），
+检查测试是否能捕获这些变异。高覆盖率 + 低变异存活率 = 高质量测试。
+
+详细指南请阅读 `references/mutation-testing.md`。
+
+触发条件：
+- 覆盖率已达 90%+
+- 用户要求验证测试质量
+- 关键模块需要高置信度
+
+### 扩展测试模式
+
+以下测试模式适用于特定场景，详细指南在 `references/` 目录：
+
+- **属性测试**（`references/property-testing.md`）：适用于数据解析、格式转换等有明确不变量的场景。
+  使用 `Hypothesis` 自动生成大量随机输入，发现手写用例遗漏的边界情况。
+- **真实依赖测试**（`references/real-dependency-testing.md`）：适用于需要数据库、消息队列等
+  真实服务的场景。使用 `testcontainers-python` 或本地替代方案，比 mock 更可靠。
+- **快照测试**（`references/snapshot-testing.md`）：适用于复杂输出结构（API 响应、配置对象）
+  的回归测试。使用 `syrupy` 自动捕获和比对输出快照。
