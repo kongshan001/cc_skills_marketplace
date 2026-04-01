@@ -1,7 +1,7 @@
 ---
-name: claude-code-setup
+name: cc-code-setup
 description: 一键生成完整的 .claude 工程目录结构，基于最新的 Claude Code 官方文档。包含 CLAUDE.md、settings.json、rules、skills、agents、hooks、MCP 配置等。当用户想要为 Claude Code 配置项目、初始化 .claude 目录、或设置 Claude Code 工作环境时使用。
-argument-hint: [project-path]
+argument-hint: "project-path"
 ---
 
 # Claude Code 项目配置生成器
